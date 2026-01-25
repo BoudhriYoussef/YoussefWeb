@@ -1,61 +1,53 @@
+//+--------Youssef BOUDHRI protect-------------------------------------+
+//|                                                  ATRReversalEA.mq5 |
+//|                        Copyright 2023, MetaQuotes Software Corp. |
+//|                                             https://www.mql5.com |
 //+------------------------------------------------------------------+
-//|                                                  MartingaleEA.mq5 |
-//|                                                                  |
-//|                                                                  |
-//+------------------------------------------------------------------+
-#property copyright ""
+#property copyright "Copyright 2023, MetaQuotes Software Corp."
+#property link      "https://www.mql5.com"
 #property version   "1.00"
-#property description "Martingale EA with ATR entry condition"
 
-//--- Input parameters
-input double InitialLotSize = 0.01;          // Initial lot size
-input int    DistancePips = 50;              // Distance between trades in pips (for averaging down)
-input double ATRThreshold = 3.00;            // ATR threshold for entry
-input int    TakeProfitPips = 100;           // Take profit in pips
-input int    ATRPeriod = 14;                 // ATR period
-input int    MagicNumber = 12345;            // Magic number for trades
-input int    MaxTrades = 10;                 // Maximum number of trades in martingale sequence
+//+------------------------------------------------------------------+
+//| Input parameters                                                 |
+//+------------------------------------------------------------------+
+input int      ATR_Period = 14;               // Période ATR
+input double   ATR_Multiplier = 2.0;          // Multiplicateur ATR
+input double   LotSize = 0.1;                 // Taille du lot
+input int      StopLoss_Pips = 30;            // Stop Loss (pips)
+input int      TakeProfit_Pips = 50;          // Take Profit (pips)
+input int      MagicNumber = 12345;           // Magic Number
+input int      Slippage = 3;                  // Slippage
+input bool     UseTrailingStop = true;        // Utiliser Trailing Stop
+input int      TrailingStop_Pips = 20;        // Trailing Stop (pips)
 
-//--- Global variables
-double pipValue;
+//+------------------------------------------------------------------+
+//| Global variables                                                 |
+//+------------------------------------------------------------------+
 int atrHandle;
-double lotSizes[];
-int tradeCount = 0;
-double totalVolume = 0;
-double averagePrice = 0;
-double firstTradePrice = 0;                  // Price of the first trade in sequence
+double buyStopPrice, sellStopPrice;
+ulong buyTicket, sellTicket;
+double pointMultiplier; // Multiplicateur pour gérer les pips
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
-    //--- Calculate pip value based on symbol
-    pipValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE) * 
-               SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
-    
-    if(SymbolInfoInteger(_Symbol, SYMBOL_DIGITS) == 3 || 
-       SymbolInfoInteger(_Symbol, SYMBOL_DIGITS) == 5)
-        pipValue *= 10;
-    
-    //--- Create ATR indicator handle
-    atrHandle = iATR(_Symbol, PERIOD_CURRENT, ATRPeriod);
-    if(atrHandle == INVALID_HANDLE)
-    {
-        Print("Error creating ATR indicator");
-        return(INIT_FAILED);
-    }
-    
-    //--- Initialize lot sizes array for martingale
-    ArrayResize(lotSizes, MaxTrades);
-    lotSizes[0] = InitialLotSize;
-    
-    for(int i = 1; i < MaxTrades; i++)
-    {
-        lotSizes[i] = lotSizes[i-1] * 2; // Martingale: double the lot size
-    }
-    
-    return(INIT_SUCCEEDED);
+   // Créer le handle pour l'indicateur ATR
+   atrHandle = iATR(_Symbol, _Period, ATR_Period);
+   if(atrHandle == INVALID_HANDLE)
+   {
+      Print("Erreur lors de la création de l'ATR");
+      return(INIT_FAILED);
+   }
+   
+   // Calculer le multiplicateur de points pour les pips
+   pointMultiplier = CalculatePointMultiplier();
+   
+   // Supprimer les ordres en attente existants
+   DeletePendingOrders();
+   
+   return(INIT_SUCCEEDED);
 }
 
 //+------------------------------------------------------------------+
@@ -63,8 +55,9 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-    if(atrHandle != INVALID_HANDLE)
-        IndicatorRelease(atrHandle);
+   // Supprimer le handle de l'indicateur
+   if(atrHandle != INVALID_HANDLE)
+      IndicatorRelease(atrHandle);
 }
 
 //+------------------------------------------------------------------+
@@ -72,240 +65,256 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-    //--- Check for existing positions
-    CheckForTP();
-    
-    int positions = CountPositions();
-    
-    //--- Only check ATR when no positions are open
-    if(positions == 0)
-    {
-        //--- Reset trade count when no positions exist
-        if(tradeCount > 0)
-        {
-            tradeCount = 0;
-            totalVolume = 0;
-            averagePrice = 0;
-            firstTradePrice = 0;
-        }
-        
-        CheckForEntry();
-    }
-    else
-    {
-        //--- When positions exist, check for additional entries when price moves down
-        CheckForMartingaleEntry();
-    }
+   // Vérifier si nous avons assez de bars
+   if(Bars(_Symbol, _Period) < ATR_Period + 10)
+      return;
+   
+   // Calculer les prix des ordres stop
+   CalculateStopPrices();
+   
+   // Gérer les ordres en attente
+   ManagePendingOrders();
+   
+   // Gérer le trailing stop
+   if(UseTrailingStop)
+      ManageTrailingStop();
 }
 
 //+------------------------------------------------------------------+
-//| Check for entry condition (only when no positions exist)         |
+//| Calculer le multiplicateur de points                            |
 //+------------------------------------------------------------------+
-void CheckForEntry()
+double CalculatePointMultiplier()
 {
-    double atrValue = GetATRValue();
-    
-    if(atrValue <= ATRThreshold && tradeCount == 0)
-    {
-        OpenBuyPosition(lotSizes[tradeCount]);
-        tradeCount++;
-        firstTradePrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK); // Store first trade price
-        Print("First trade opened at price: ", firstTradePrice);
-    }
+   // Pour les paires Forex (4-5 digits)
+   if(_Digits == 4 || _Digits == 5)
+      return 10.0;
+   // Pour les indices, commodities, etc.
+   else
+      return 1.0;
 }
 
 //+------------------------------------------------------------------+
-//| Check for martingale entry when price moves down                 |
+//| Convertir les pips en prix                                      |
 //+------------------------------------------------------------------+
-void CheckForMartingaleEntry()
+double PipsToPrice(int pips)
 {
-    if(tradeCount >= MaxTrades) return;
-    
-    double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-    
-    //--- Calculate how many distance levels we've moved down from first trade
-    double priceDiffPoints = (firstTradePrice - currentPrice) / SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double priceDiffPips = priceDiffPoints / 10;
-    
-    //--- Calculate how many trades should be open based on distance moved
-    int expectedTrades = 1 + (int)MathFloor(priceDiffPips / DistancePips);
-    
-    Print("Current price: ", currentPrice, " First trade price: ", firstTradePrice);
-    Print("Price diff pips: ", priceDiffPips, " Expected trades: ", expectedTrades, " Current trade count: ", tradeCount);
-    
-    //--- Open additional trades if we've moved enough distance down
-    if(expectedTrades > tradeCount)
-    {
-        int tradesToOpen = expectedTrades - tradeCount;
-        
-        for(int i = 0; i < tradesToOpen && tradeCount < MaxTrades; i++)
-        {
-            OpenBuyPosition(lotSizes[tradeCount]);
-            tradeCount++;
-            Print("Martingale trade opened. Trade count: ", tradeCount);
-        }
-        
-        UpdateAveragePrice();
-    }
+   return pips * _Point * pointMultiplier;
 }
 
 //+------------------------------------------------------------------+
-//| Open buy position                                                |
+//| Calculer les prix des ordres stop                               |
 //+------------------------------------------------------------------+
-void OpenBuyPosition(double lotSize)
+void CalculateStopPrices()
 {
-    MqlTradeRequest request;
-    MqlTradeResult result;
-    ZeroMemory(request);
-    ZeroMemory(result);
-    
-    double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-    
-    request.action = TRADE_ACTION_DEAL;
-    request.symbol = _Symbol;
-    request.volume = lotSize;
-    request.type = ORDER_TYPE_BUY;
-    request.price = price;
-    request.sl = 0; // No stop loss
-    request.tp = 0; // TP will be managed separately for all trades
-    request.magic = MagicNumber;
-    request.comment = "Martingale Trade " + IntegerToString(tradeCount + 1);
-    
-    //--- Send order
-    if(OrderSend(request, result))
-    {
-        Print("Buy order opened. Ticket: ", result.order, " Lot size: ", lotSize, " Price: ", price);
-        UpdateAveragePrice();
-    }
-    else
-    {
-        Print("Error opening buy order: ", GetLastError());
-    }
+   double atrValue[1];
+   
+   // Récupérer la valeur ATR
+   if(CopyBuffer(atrHandle, 0, 0, 1, atrValue) < 1)
+   {
+      Print("Erreur lors de la copie des données ATR");
+      return;
+   }
+   
+   double currentHigh = iHigh(_Symbol, _Period, 1);
+   double currentLow = iLow(_Symbol, _Period, 1);
+   
+   // Ordres inversés comme demandé
+   // Buy Stop: En-dessous du bas (cassure de support)
+   // Sell Stop: Au-dessus du haut (cassure de résistance)
+   buyStopPrice = currentLow - (atrValue[0] * ATR_Multiplier);
+   sellStopPrice = currentHigh + (atrValue[0] * ATR_Multiplier);
+   
+   // Ajuster aux digits du symbole
+   buyStopPrice = NormalizeDouble(buyStopPrice, _Digits);
+   sellStopPrice = NormalizeDouble(sellStopPrice, _Digits);
+   
+   Print("Buy Stop (Support): ", buyStopPrice, " | Sell Stop (Résistance): ", sellStopPrice, " | ATR: ", atrValue[0]);
 }
 
 //+------------------------------------------------------------------+
-//| Update average price of all positions                            |
+//| Gérer les ordres en attente                                     |
 //+------------------------------------------------------------------+
-void UpdateAveragePrice()
+void ManagePendingOrders()
 {
-    totalVolume = 0;
-    averagePrice = 0;
-    
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        if(PositionGetSymbol(i) == _Symbol && PositionGetInteger(POSITION_MAGIC) == MagicNumber)
-        {
-            double volume = PositionGetDouble(POSITION_VOLUME);
-            double price = PositionGetDouble(POSITION_PRICE_OPEN);
+   bool buyOrderExists = false;
+   bool sellOrderExists = false;
+   
+   // Vérifier les positions existantes
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+      {
+         if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+            buyOrderExists = true;
+         else if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
+            sellOrderExists = true;
+      }
+   }
+   
+   // Vérifier les ordres en attente
+   for(int i = 0; i < OrdersTotal(); i++)
+   {
+      if(OrderGetTicket(i))
+      {
+         if(OrderGetInteger(ORDER_MAGIC) == MagicNumber)
+         {
+            if(OrderGetInteger(ORDER_TYPE) == ORDER_TYPE_BUY_STOP)
+               buyOrderExists = true;
+            else if(OrderGetInteger(ORDER_TYPE) == ORDER_TYPE_SELL_STOP)
+               sellOrderExists = true;
+         }
+      }
+   }
+   
+   // Placer l'ordre Buy Stop s'il n'existe pas (Cassure de support)
+   if(!buyOrderExists)
+   {
+      // Calculer SL et TP en pips
+      double sl = buyStopPrice - PipsToPrice(StopLoss_Pips);
+      double tp = buyStopPrice + PipsToPrice(TakeProfit_Pips);
+      
+      MqlTradeRequest request;
+      MqlTradeResult result;
+      ZeroMemory(request);
+      ZeroMemory(result);
+      
+      request.action = TRADE_ACTION_PENDING;
+      request.symbol = _Symbol;
+      request.volume = LotSize;
+      request.type = ORDER_TYPE_BUY_STOP;
+      request.price = NormalizeDouble(buyStopPrice, _Digits);
+      request.sl = NormalizeDouble(sl, _Digits);
+      request.tp = NormalizeDouble(tp, _Digits);
+      request.magic = MagicNumber;
+      request.deviation = Slippage;
+      
+      if(OrderSend(request, result))
+         Print("BUY STOP - Support: ", DoubleToString(buyStopPrice, _Digits), 
+               " | SL: ", DoubleToString(sl, _Digits), 
+               " | TP: ", DoubleToString(tp, _Digits));
+      else
+         Print("Erreur Buy Stop: ", GetLastError());
+   }
+   
+   // Placer l'ordre Sell Stop s'il n'existe pas (Cassure de résistance)
+   if(!sellOrderExists)
+   {
+      // Calculer SL et TP en pips
+      double sl = sellStopPrice + PipsToPrice(StopLoss_Pips);
+      double tp = sellStopPrice - PipsToPrice(TakeProfit_Pips);
+      
+      MqlTradeRequest request;
+      MqlTradeResult result;
+      ZeroMemory(request);
+      ZeroMemory(result);
+      
+      request.action = TRADE_ACTION_PENDING;
+      request.symbol = _Symbol;
+      request.volume = LotSize;
+      request.type = ORDER_TYPE_SELL_STOP;
+      request.price = NormalizeDouble(sellStopPrice, _Digits);
+      request.sl = NormalizeDouble(sl, _Digits);
+      request.tp = NormalizeDouble(tp, _Digits);
+      request.magic = MagicNumber;
+      request.deviation = Slippage;
+      
+      if(OrderSend(request, result))
+         Print("SELL STOP - Résistance: ", DoubleToString(sellStopPrice, _Digits),
+               " | SL: ", DoubleToString(sl, _Digits),
+               " | TP: ", DoubleToString(tp, _Digits));
+      else
+         Print("Erreur Sell Stop: ", GetLastError());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Gérer le trailing stop                                          |
+//+------------------------------------------------------------------+
+void ManageTrailingStop()
+{
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+      {
+         double newSl = 0;
+         double currentSl = PositionGetDouble(POSITION_SL);
+         
+         if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+         {
+            newSl = SymbolInfoDouble(_Symbol, SYMBOL_BID) - PipsToPrice(TrailingStop_Pips);
+            newSl = NormalizeDouble(newSl, _Digits);
             
-            totalVolume += volume;
-            averagePrice += price * volume;
-        }
-    }
-    
-    if(totalVolume > 0)
-        averagePrice /= totalVolume;
-        
-    Print("Average price updated: ", averagePrice, " Total volume: ", totalVolume);
+            if(newSl > currentSl && newSl < SymbolInfoDouble(_Symbol, SYMBOL_BID))
+            {
+               ModifyStopLoss(ticket, newSl);
+            }
+         }
+         else if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
+         {
+            newSl = SymbolInfoDouble(_Symbol, SYMBOL_ASK) + PipsToPrice(TrailingStop_Pips);
+            newSl = NormalizeDouble(newSl, _Digits);
+            
+            if((newSl < currentSl || currentSl == 0) && newSl > SymbolInfoDouble(_Symbol, SYMBOL_ASK))
+            {
+               ModifyStopLoss(ticket, newSl);
+            }
+         }
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
-//| Check if total profit target is reached                          |
+//| Modifier le stop loss                                           |
 //+------------------------------------------------------------------+
-void CheckForTP()
+bool ModifyStopLoss(ulong ticket, double newSl)
 {
-    if(CountPositions() == 0) return;
-    
-    double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-    double profitPoints = (currentPrice - averagePrice) / 
-                         SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double profitPips = profitPoints / 10;
-    
-    if(profitPips >= TakeProfitPips)
-    {
-        Print("Take profit reached! Profit: ", profitPips, " pips. Average price: ", averagePrice, " Current price: ", currentPrice);
-        CloseAllPositions();
-    }
+   MqlTradeRequest request;
+   MqlTradeResult result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+   
+   request.action = TRADE_ACTION_SLTP;
+   request.position = ticket;
+   request.symbol = _Symbol;
+   request.sl = newSl;
+   request.magic = MagicNumber;
+   
+   if(OrderSend(request, result))
+   {
+      Print("Stop Loss modifié pour le ticket: ", ticket, " -> New SL: ", newSl);
+      return true;
+   }
+   else
+   {
+      Print("Erreur modification SL: ", GetLastError());
+      return false;
+   }
 }
 
 //+------------------------------------------------------------------+
-//| Close all positions                                              |
+//| Supprimer les ordres en attente                                 |
 //+------------------------------------------------------------------+
-void CloseAllPositions()
+void DeletePendingOrders()
 {
-    int closedCount = 0;
-    double totalProfit = 0;
-    
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        if(PositionGetSymbol(i) == _Symbol && PositionGetInteger(POSITION_MAGIC) == MagicNumber)
-        {
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(OrderGetTicket(i))
+      {
+         if(OrderGetInteger(ORDER_MAGIC) == MagicNumber)
+         {
             MqlTradeRequest request;
             MqlTradeResult result;
             ZeroMemory(request);
             ZeroMemory(result);
             
-            ulong ticket = PositionGetInteger(POSITION_TICKET);
-            double volume = PositionGetDouble(POSITION_VOLUME);
-            double profit = PositionGetDouble(POSITION_PROFIT);
-            totalProfit += profit;
+            request.action = TRADE_ACTION_REMOVE;
+            request.order = OrderGetTicket(i);
             
-            request.action = TRADE_ACTION_DEAL;
-            request.symbol = _Symbol;
-            request.volume = volume;
-            request.type = ORDER_TYPE_SELL;
-            request.price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-            request.position = ticket;
-            request.magic = MagicNumber;
-            
-            if(OrderSend(request, result))
-            {
-                Print("Position closed. Ticket: ", ticket, " Profit: ", profit);
-                closedCount++;
-            }
-            else
-            {
-                Print("Error closing position: ", GetLastError());
-            }
-        }
-    }
-    
-    if(closedCount > 0)
-    {
-        Print("All ", closedCount, " positions closed. Total profit: ", totalProfit);
-        tradeCount = 0;
-        totalVolume = 0;
-        averagePrice = 0;
-        firstTradePrice = 0;
-    }
-}
-
-//+------------------------------------------------------------------+
-//| Count positions for this EA                                      |
-//+------------------------------------------------------------------+
-int CountPositions()
-{
-    int count = 0;
-    for(int i = 0; i < PositionsTotal(); i++)
-    {
-        if(PositionGetSymbol(i) == _Symbol && PositionGetInteger(POSITION_MAGIC) == MagicNumber)
-        {
-            count++;
-        }
-    }
-    return count;
-}
-
-//+------------------------------------------------------------------+
-//| Get current ATR value                                            |
-//+------------------------------------------------------------------+
-double GetATRValue()
-{
-    double atr[1];
-    if(CopyBuffer(atrHandle, 0, 0, 1, atr) > 0)
-    {
-        return NormalizeDouble(atr[0], 2);
-    }
-    return 100; // Return high value if error
+            OrderSend(request, result);
+         }
+      }
+   }
 }
 //+------------------------------------------------------------------+
