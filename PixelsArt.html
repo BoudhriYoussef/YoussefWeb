@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Application Pixel Art</title>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+
+#grid {
+    display: grid;
+    grid-template-columns: repeat(25, 20px);
+    grid-template-rows: repeat(25, 20px);
+    gap: 1px;
+    width: max-content;
+    margin: 20px auto;
+}
+
+.pixel {
+    width: 20px;
+    height: 20px;
+    background-color: white;
+    border: 1px solid #eee;
+}
+
+#palette {
+    margin: 20px;
+}
+
+.colorBtn {
+    width: 40px;
+    height: 40px;
+    border: none;
+    margin: 5px;
+    cursor: pointer;
+}
+
+#selectedColor {
+    width: 50px;
+    height: 50px;
+    border: 2px solid black;
+    margin: 10px auto;
+}
+</style>
+</head>
+
+<body>
+
+<h1>Application Pixel-Art</h1>
+<p>Le pixel-art est une technique de dessin numérique basée sur des images en basse résolution avec un nombre limité de couleurs.</p>
+
+<div>
+    <label>Nombre de couleurs (5 à 20) :</label>
+    <input type="number" id="colorCount" min="5" max="20" value="9">
+    <button id="generatePalette">Générer palette</button>
+    <button id="grayMode">Nuance de gris</button>
+    <button id="randomColors">Couleurs aléatoires</button>
+</div>
+
+<h3>Couleur sélectionnée :</h3>
+<div id="selectedColor"></div>
+
+<div id="palette"></div>
+
+<div id="grid"></div>
+
+<button id="reset">Réinitialiser</button>
+
+<script>
+
+// VARIABLES
+let selectedColor = "white";
+let grayModeActive = false;
+
+const grid = document.getElementById("grid");
+const palette = document.getElementById("palette");
+const selectedColorDisplay = document.getElementById("selectedColor");
+
+selectedColorDisplay.style.backgroundColor = selectedColor;
+
+// CREATION GRILLE 25x25
+for(let i = 0; i < 25 * 25; i++) {
+    let pixel = document.createElement("div");
+    pixel.classList.add("pixel");
+
+    pixel.addEventListener("click", function() {
+        pixel.style.backgroundColor = selectedColor;
+    });
+
+    grid.appendChild(pixel);
+}
+
+// FONCTION GENERATION COULEURS ALEATOIRES
+function randomColor() {
+    let r = Math.floor(Math.random()*256);
+    let g = Math.floor(Math.random()*256);
+    let b = Math.floor(Math.random()*256);
+    return `rgb(${r},${g},${b})`;
+}
+
+// GENERER PALETTE
+function generatePalette() {
+
+    palette.innerHTML = "";
+    grayModeActive = false;
+
+    let count = parseInt(document.getElementById("colorCount").value);
+
+    for(let i = 0; i < count; i++) {
+        let btn = document.createElement("button");
+        btn.classList.add("colorBtn");
+
+        let color = randomColor();
+        btn.style.backgroundColor = color;
+        btn.setAttribute("data-color", color);
+
+        btn.addEventListener("click", function() {
+            selectedColor = btn.getAttribute("data-color");
+            selectedColorDisplay.style.backgroundColor = selectedColor;
+        });
+
+        palette.appendChild(btn);
+    }
+
+    // Bouton blanc
+    let whiteBtn = document.createElement("button");
+    whiteBtn.classList.add("colorBtn");
+    whiteBtn.style.backgroundColor = "white";
+
+    whiteBtn.addEventListener("click", function() {
+        selectedColor = "white";
+        selectedColorDisplay.style.backgroundColor = "white";
+    });
+
+    palette.appendChild(whiteBtn);
+}
+
+// MODE GRIS
+document.getElementById("grayMode").addEventListener("click", function() {
+
+    palette.innerHTML = "";
+    grayModeActive = true;
+
+    let count = parseInt(document.getElementById("colorCount").value);
+    let step = Math.floor(255 / (count - 1));
+
+    for(let i = 0; i < count; i++) {
+
+        let value = step * i;
+        let gray = `rgb(${value},${value},${value})`;
+
+        let btn = document.createElement("button");
+        btn.classList.add("colorBtn");
+        btn.style.backgroundColor = gray;
+        btn.setAttribute("data-color", gray);
+
+        btn.addEventListener("click", function() {
+            selectedColor = gray;
+            selectedColorDisplay.style.backgroundColor = gray;
+        });
+
+        palette.appendChild(btn);
+    }
+});
+
+// REGENERER COULEURS
+document.getElementById("randomColors").addEventListener("click", function() {
+    if(grayModeActive) {
+        alert("Impossible de générer des couleurs en mode nuance de gris !");
+        return;
+    }
+    generatePalette();
+});
+
+// GENERER PALETTE AU CLIC
+document.getElementById("generatePalette").addEventListener("click", generatePalette);
+
+// RESET
+document.getElementById("reset").addEventListener("click", function() {
+    let pixels = document.querySelectorAll(".pixel");
+    pixels.forEach(function(pixel) {
+        pixel.style.backgroundColor = "white";
+    });
+});
+
+// INITIALISATION
+generatePalette();
+
+</script>
+
+</body>
+</html>
