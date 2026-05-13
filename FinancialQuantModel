@@ -1,0 +1,105 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 1. SETUP DATA
+ticker = "NQ=F"
+data = yf.download(ticker, start="2023-06-01", end="2026-05-11")
+
+# Nettoyage Multi-index yfinance
+if isinstance(data.columns, pd.MultiIndex):
+    df = data['Close'][ticker].to_frame()
+    df['High'] = data['High'][ticker]
+    df['Low'] = data['Low'][ticker]
+else:
+    df = data[['Close', 'High', 'Low']].copy()
+
+df.columns = ['Close', 'High', 'Low']
+
+# 2. INDICATEURS
+df['SMA_5'] = df['Close'].rolling(window=5).mean()
+df['std'] = df['Close'].rolling(window=5).std()
+df['Lower_Band'] = df['SMA_5'] - (1.0 * df['std'])
+df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
+
+# Simulation IA (Tendance Haussière)
+df['IA_Trend'] = 1 
+df.dropna(inplace=True)
+
+# 3. MOTEUR DE TRADING & TRACAGE
+in_position = False
+entry_price = 0
+tp_level = 0
+sl_level = 0
+trade_history = []
+
+for i in range(len(df)):
+    current_close = df['Close'].iloc[i]
+    current_date = df.index[i]
+    
+    if not in_position:
+        # Signal : IA Haussière + Prix sous la bande
+        if df['IA_Trend'].iloc[i] == 1 and current_close < df['Lower_Band'].iloc[i]:
+            in_position = True
+            entry_price = current_close
+            atr = df['ATR'].iloc[i]
+            sl_level = entry_price - (1 * atr)
+            tp_level = entry_price + (2 * atr)
+            trade_history.append({'type': 'ENTRY', 'date': current_date, 'price': entry_price, 'tp': tp_level, 'sl': sl_level})
+            
+    elif in_position:
+        # Vérification TP
+        if current_close >= tp_level:
+            trade_history.append({'type': 'TP', 'date': current_date, 'price': tp_level})
+            in_position = False
+        # Vérification SL
+        elif current_close <= sl_level:
+            trade_history.append({'type': 'SL', 'date': current_date, 'price': sl_level})
+            in_position = False
+
+# 4. GRAPHIQUE DE PERFORMANCE DÉTAILLÉ
+plt.figure(figsize=(16, 9))
+plt.plot(df.index, df['Close'], label='Prix NASDAQ (NQ=F)', color='black', alpha=0.3, linewidth=1)
+
+# Dessiner les bandes de décision
+plt.plot(df.index, df['Lower_Band'], label='Seuil d\'Achat (SMA5 - 1std)', color='blue', linestyle='--', alpha=0.5)
+
+# Tracer chaque trade
+for trade in trade_history:
+    if trade['type'] == 'ENTRY':
+        plt.scatter(trade['date'], trade['price'], marker='^', color='green', s=150, zorder=5, label='Achat' if 'Achat' not in plt.gca().get_label() else "")
+        # Tracer les lignes de TP/SL pour ce trade précis
+        plt.hlines(trade['tp'], xmin=trade['date'], xmax=trade['date'] + pd.Timedelta(days=5), color='blue', alpha=0.4, linestyle=':')
+        plt.hlines(trade['sl'], xmin=trade['date'], xmax=trade['date'] + pd.Timedelta(days=5), color='red', alpha=0.4, linestyle=':')
+        
+    elif trade['type'] == 'TP':
+        plt.scatter(trade['date'], trade['price'], marker='o', color='blue', s=100, edgecolors='black', label='Take Profit' if 'Take Profit' not in plt.gca().get_label() else "")
+        
+    elif trade['type'] == 'SL':
+        plt.scatter(trade['date'], trade['price'], marker='x', color='red', s=100, linewidths=3, label='Stop Loss' if 'Stop Loss' not in plt.gca().get_label() else "")
+
+plt.title(f"Analyse des Trades : Mean Reversion Journalière sur {ticker}", fontsize=16)
+plt.ylabel("Prix (Points)", fontsize=12)
+plt.grid(True, which='both', linestyle='--', alpha=0.5)
+plt.legend(loc='best')
+
+# Nettoyage des doublons dans la légende
+handles, labels = plt.gca().get_legend_handles_labels()
+by_label = dict(zip(labels, handles))
+plt.legend(by_label.values(), by_label.keys())
+
+plt.show()
+
+# 5. BILAN RAPIDE
+n_tp = len([t for t in trade_history if t['type'] == 'TP'])
+n_sl = len([t for t in trade_history if t['type'] == 'SL'])
+print(f"Bilan : {n_tp} Gains / {n_sl} Pertes")
+# --- CALCUL DU SCORE QUANTITATIF ---
+win_rate = (n_tp / (n_tp + n_sl)) * 100 if (n_tp + n_sl) > 0 else 0
+# Un RR de 1:2 signifie qu'un gain vaut 2 points et une perte -1 point
+expectancy = (win_rate/100 * 2) - ((1 - win_rate/100) * 1)
+
+print(f"\n--- ANALYSE QUANT ---")
+print(f"Taux de réussite : {win_rate:.2f}%")
+print(f"Espérance mathématique : {expectancy:.2f} (Si > 0,5 la stratégie est rentable)")
