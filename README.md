@@ -8,7 +8,7 @@
 
 <h3 align="left">Connect with me:</h3>
 <p align="left">
-<a href="https://linkedin.com/in/youssef-boudhri" target="blank"><img align="center" src="https://raw.githubusercontent.com/rahuldkjain/github-profile-readme-generator/master/src/images/icons/Social/linked-in-alt.svg" alt="youssef-boudhri" height="30" width="40" /></a>
+<a href="https://www.linkedin.com/in/youssef-boudhri-0b26a72b3/" target="blank"><img align="center" src="https://raw.githubusercontent.com/rahuldkjain/github-profile-readme-generator/master/src/images/icons/Social/linked-in-alt.svg" alt="youssef-boudhri" height="30" width="40" /></a>
 <a href="https://instagram.com/0emotionsfx" target="blank"><img align="center" src="https://raw.githubusercontent.com/rahuldkjain/github-profile-readme-generator/master/src/images/icons/Social/instagram.svg" alt="0emotionsfx" height="30" width="40" /></a>
 <a href="https://www.youtube.com/c/0emotionsfx" target="blank"><img align="center" src="https://raw.githubusercontent.com/rahuldkjain/github-profile-readme-generator/master/src/images/icons/Social/youtube.svg" alt="0emotionsfx" height="30" width="40" /></a>
 </p>
